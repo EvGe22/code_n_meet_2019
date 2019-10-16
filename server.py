@@ -1,8 +1,6 @@
-from flask import Flask
-from flask import render_template
-from flask import request
+from flask import Flask, render_template, request
 
-app = Flask(__name__, )
+app = Flask(__name__)
 
 
 @app.route('/')
@@ -12,9 +10,10 @@ def main_page():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    f = request.files['the_file']
-
+    f = request.files['upload_image']
+    print('ha')
     return render_template('result_page.html')
 
 
-app.run(port=5001)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5001, debug=True)
