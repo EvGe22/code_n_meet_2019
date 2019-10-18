@@ -16,10 +16,12 @@
 <h3>Meet&Code2019. Ecology + AI</h3>
 
 <div class="container">
-    <form enctype="multipart/form-data" action="/upload" method="POST">
-        <input type="file" name="upload_image">
-        <input type="submit">
-    </form>
+    <img src="data:image/png;base64, {{ image_base64 }}" alt="Red dot" />
+    <ul>
+    {% for name, text in matches.items() %}
+        <li>{{ name }}: {{ text }}</li>
+    {% endfor %}
+    </ul>
 </div>
 
 </body>

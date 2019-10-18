@@ -1,48 +1,106 @@
-import cv2
+from collections import namedtuple
 import numpy as np
+import argparse
+import cv2
 
-MAX_FEATURES = 500
-GOOD_MATCH_PERCENT = 0.15
+
+SavedResult = namedtuple('SavedResult', ['confidence', 'detection_bbox'])
+
+font = cv2.FONT_HERSHEY_SIMPLEX
+fontScale = 1
+fontColor = (255, 255, 255)
+lineType = 2
 
 
-def alignImages(im1, im2):
-    # Convert images to grayscale
-    im1Gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
-    im2Gray = cv2.cvtColor(im2, cv2.COLOR_BGR2GRAY)
+def resize(image, width=None, height=None):
+    # initialize the dimensions of the image to be resized and
+    # grab the image size
+    dim = None
+    (h, w) = image.shape[:2]
 
-    # Detect ORB features and compute descriptors.
-    orb = cv2.SIFT_create(MAX_FEATURES)
-    keypoints1, descriptors1 = orb.detectAndCompute(im1Gray, None)
-    keypoints2, descriptors2 = orb.detectAndCompute(im2Gray, None)
+    # check to see if the width is None
+    if width is None:
+        # calculate the ratio of the height and construct the
+        # dimensions
+        ratio = height / float(h)
+        dim = (int(w * ratio), height)
 
-    # Match features.
-    matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
-    matches = matcher.match(descriptors1, descriptors2, None)
+    # otherwise, the height is None
+    else:
+        # calculate the ratio of the width and construct the
+        # dimensions
+        ratio = width / float(w)
+        dim = (width, int(h * ratio))
 
-    # Sort matches by score
-    matches.sort(key=lambda x: x.distance, reverse=False)
+    # resize the image
+    resized = cv2.resize(image, dim, interpolation=cv2.INTER_AREA)
 
-    # Remove not so good matches
-    numGoodMatches = int(len(matches) * GOOD_MATCH_PERCENT)
-    matches = matches[:numGoodMatches]
+    # return the resized image
+    return resized, ratio
 
-    # Draw top matches
-    imMatches = cv2.drawMatches(im1, keypoints1, im2, keypoints2, matches, None)
-    cv2.imwrite("matches.jpg", imMatches)
 
-    # Extract location of good matches
-    points1 = np.zeros((len(matches), 2), dtype=np.float32)
-    points2 = np.zeros((len(matches), 2), dtype=np.float32)
+def prepare_image(image_):
+    image_ = cv2.cvtColor(image_, cv2.COLOR_BGR2GRAY)
+    return image_
 
-    for i, match in enumerate(matches):
-        points1[i, :] = keypoints1[match.queryIdx].pt
-        points2[i, :] = keypoints2[match.trainIdx].pt
 
-    # Find homography
-    h, mask = cv2.findHomography(points1, points2, cv2.RANSAC)
+def prepare_template(template_):
+    template_ = cv2.cvtColor(template_, cv2.COLOR_BGR2GRAY)
+    template_ = cv2.Canny(template_, 50, 200)
+    return template_
 
-    # Use homography
-    height, width, channels = im2.shape
-    im1Reg = cv2.warpPerspective(im1, h, (width, height))
 
-    return im1Reg, h
+def find_template(image, template):
+    found = None
+
+    for t_scale in np.linspace(0.5, 1.0, 10)[::-1]:
+        r_template, _ = resize(template, width=int(template.shape[1] * t_scale))
+        (t_height, t_width) = r_template.shape[:2]
+
+        for scale in np.linspace(0.2, 1.0, 20)[::-1]:
+            resized, resize_ratio = resize(image, width=int(image.shape[1] * scale))
+
+            if resized.shape[0] < t_height or resized.shape[1] < t_width:
+                break
+
+            edged = cv2.Canny(resized, 50, 200)
+            match_result = cv2.matchTemplate(edged, r_template, cv2.TM_CCORR_NORMED)
+            (_, maxVal, _, maxLoc) = cv2.minMaxLoc(match_result)
+
+            if found is None or found.confidence < maxVal:
+                (startX, startY) = (int(maxLoc[0] * resize_ratio), int(maxLoc[1] * resize_ratio))
+                (endX, endY) = (int((maxLoc[0] + t_width) * resize_ratio), int((maxLoc[1] + t_height) * resize_ratio))
+                bbox = ((startX, startY), (endX, endY))
+                found = SavedResult(confidence=maxVal,
+                                    detection_bbox=bbox)
+    return found
+
+
+def draw_match(image, bbox, name=None):
+    # bbox == (startX, startY), (endX, endY)
+    cv2.rectangle(image, *bbox, (0, 0, 255), 2)
+    if name is not None:
+        cv2.putText(image, name,
+                    bbox[0],
+                    font,
+                    fontScale,
+                    fontColor,
+                    lineType)
+
+
+if __name__ == '__main__':
+    # construct the argument parser and parse the arguments
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-t", "--template", default='./eco_icons/tidyman.jpg', help="Path to template image")
+    ap.add_argument("-i", "--image", default='./new_images/IMG_20191016_224337.jpg',
+                    help="Path to image where template will be matched")
+    args = vars(ap.parse_args())
+    template = cv2.imread(args["template"])
+    image = cv2.imread(args["image"])
+    prep_image, prep_template = prepare_image(image), prepare_template(template)
+    result = find_template(prep_image, prep_template)
+    print(result)
+    if result is not None:
+        draw_match(image, result.detection_bbox)
+        cv2.imshow("Image", image)
+        cv2.waitKey(2000)
